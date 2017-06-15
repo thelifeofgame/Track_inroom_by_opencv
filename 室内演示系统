@@ -1,0 +1,323 @@
+// 室内演示系统.cpp : 定义控制台应用程序的入口点。
+//
+// 存储标准图片特征点数目.cpp : 定义控制台应用程序的入口点。
+//
+
+#include "stdafx.h"
+#include <windows.h>
+#include <stdio.h>
+#include<math.h>
+#include <iostream>
+#include "opencv2/core/core.hpp"//因为在属性中已经配置了opencv等目录，所以把其当成了本地目录一样
+#include "opencv2/features2d/features2d.hpp"
+#include "opencv2/highgui/highgui.hpp"
+#include"opencv2/nonfree/features2d.hpp"
+#include"opencv2/legacy/legacy.hpp"
+#include <cstdio>  
+#include <cstring>
+#include<cv.h> 
+#include <cmath>  
+#include <map>
+#include<highgui.h>
+
+
+using namespace cv;
+using namespace std;
+
+int fg=0;
+cv::Mat org,img,tmp,rep;  
+#define  WIDTH 135
+#define  HEIGHT 145
+
+
+void on_mouse(int event,int x,int y,int flags,void *ustc)//event鼠标事件代号，x,y鼠标坐标，flags拖拽和键盘操作的代号  
+{  
+    static Point pre_pt = (-1,-1);//初始坐标  
+    static Point cur_pt = (-1,-1);//实时坐标  
+    char temp[16];  
+    if (event == CV_EVENT_LBUTTONDOWN)//左键按下，读取初始坐标，并在图像上该点处划圆  
+    {  
+        org.copyTo(img);//将原始图片复制到img中  
+        sprintf(temp,"(%d,%d)",x,y);  
+        pre_pt = Point(x,y);  
+        putText(img,temp,pre_pt,FONT_HERSHEY_SIMPLEX,0.5,Scalar(0,0,0,255),1,8);//在窗口上显示坐标  
+        circle(img,pre_pt,2,Scalar(255,0,0,0),CV_FILLED,CV_AA,0);//划圆  
+		if(x>0&&x<100&&y>440)fg=1;
+		else if(x>100&&x<200&&y>400)fg=3;
+		else fg=0;
+        //imshow("img",img);  
+		//cvWaitKey(0);
+    }  
+   
+        
+    
+}  
+int choose(IplImage* Img,double *rbw,double *r)
+	{
+	                int Width,Height;
+					int ii=0,jj=0;
+					double count_up=0,count_down=0,black=0,white=0;
+					Width=Img->width;
+  					Height=Img->height;
+					for ( ii = 0; ii< Height/2;ii++)  
+                    {  
+			//uchar* ptr = (uchar*) (bwImage->imageData + i*bwimage->widthStep);
+                        for (jj = 0;jj<Width;jj++)  
+                        {  
+							if(*((unsigned char*)Img->imageData + ii*Img->widthStep + jj)==255)
+								count_up++;
+							else black++;
+
+			                }
+					 }
+				
+					for (ii = (Height/2)+1; ii< Height;ii++)  
+                    {  
+			//uchar* ptr = (uchar*) (bwImage->imageData + i*bwimage->widthStep);
+                        for (jj = 0;jj<Width;jj++)  
+                        {  
+							if(*((unsigned char*)Img->imageData + ii*Img->widthStep + jj)==255)
+								count_down++;
+							else black++;
+
+			                }
+					 }
+					
+					*r=count_down/count_up;
+					*rbw=black/(count_up+count_down);
+					
+					
+					return 1;
+	}
+int findrect(IplImage* find)
+{
+	//IplImage* out=cvCreateImage(cvGetSize(find),8,1);
+	
+	CvMemStorage *storage1 = cvCreateMemStorage(0);  
+    CvSeq * seq1 = cvCreateSeq(CV_SEQ_ELTYPE_POINT, sizeof(CvSeq), sizeof(CvPoint), storage1);  
+    CvSeq * tempSeq1 = cvCreateSeq(CV_SEQ_ELTYPE_POINT, sizeof(CvSeq), sizeof(CvPoint), storage1);  
+	cvShowImage("dfsqw",find);
+    int count = cvFindContours(find,storage1,&seq1);//返回轮廓的数目 
+	
+	 for (tempSeq1 = seq1;tempSeq1 != NULL; tempSeq1 = tempSeq1->h_next)  
+        {  
+			double Area =  cvContourArea(tempSeq1);
+			CvRect Rect = cvBoundingRect(tempSeq1,1);
+		    CvPoint2D32f point[4];  
+            CvBox2D box1 = cvMinAreaRect2(tempSeq1,0);  
+            cvBoxPoints(box1,point); 
+			
+			double A=find->width*find->height;
+			//cout<<"AREA"<<Area/A<<endl;
+			
+			if((Area/A)>0.4)
+			{
+				
+				for(int i = 0;i<4;++i) 
+			    cvLine(find,cvPointFrom32f(point[i]),cvPointFrom32f(point[((i+1)%4)?(i+1):0]),CV_RGB(255,255,255)); 
+				cvSetImageROI(find,Rect);
+				//cvShowImage("dfs",find);
+			}
+	 }
+	 return 1;
+}
+int get(double res_bw,double res_lr)
+{
+	if(res_lr>0.88&&res_lr<1.16 )return 1;//矩形
+	else if(res_lr>1.12&&res_lr<2.17&&res_bw>0.1&&res_bw<0.48)return 2;//computer
+	else if(res_lr>1.1&&res_bw>0.17)return 3;//chair
+	else return 0;
+}
+int main(int argc,char* argv[])
+{   
+	
+	CvCapture* capture = cvCaptureFromFile("test1.mp4");
+	int numFrames = (int) cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_COUNT);    
+    int m=0;
+	unsigned char * ppixel = NULL;  
+    unsigned char   pixelr = 0,pixelg = 0,pixelb = 0;  
+	unsigned char R = 56,G = 89, B = 225;   
+	double h,s,v;
+	IplImage* frame=cvQueryFrame(capture);
+	IplImage* frame_gray=cvCreateImage(cvGetSize(frame),8,1);
+	
+	CvMemStorage *storage = cvCreateMemStorage(0);  
+    CvSeq * seq = cvCreateSeq(CV_SEQ_ELTYPE_POINT, sizeof(CvSeq), sizeof(CvPoint), storage);  
+    CvSeq * tempSeq = cvCreateSeq(CV_SEQ_ELTYPE_POINT, sizeof(CvSeq), sizeof(CvPoint), storage);  
+	int start=0;
+	while(1)
+	{
+		
+	    CvFont font,font1;
+		cvInitFont(&font,CV_FONT_HERSHEY_SIMPLEX, 0.4, 0.4, 1, 1, 8); 
+		int i,j;
+		frame=cvQueryFrame(capture);
+		//cvCvtColor(frame, frame_gray, CV_RGB2GRAY);
+	    Mat org(frame);
+        org.copyTo(img);  
+        org.copyTo(tmp);  
+        namedWindow("img");//定义一个img窗口  
+        setMouseCallback("img",on_mouse,0);//调用回调函数  
+		if(fg==3){cvWaitKey(0);fg=0;}
+		CvPoint point1,point2,point3,point4,point5;
+		point1.x=0;
+		point1.y=440;
+		point2.x=100;
+		point2.y=440;
+		point3.x=100;
+		point3.y=(int)frame->height;
+		point4.x=210;
+		point4.y=440;
+		point5.x=210;
+		point5.y=(int)frame->height;
+	    cvLine(frame,point1,point2,cvScalar(0,0,255),1,8,0); 
+		cvLine(frame,point2,point3,cvScalar(0,0,255),1,8,0); 
+		cvLine(frame,point2,point4,cvScalar(0,0,255),1,8,0);
+		cvLine(frame,point4,point5,cvScalar(0,0,255),1,8,0);
+		if(fg==1)
+		{ // system("start");
+	       int imageWidth = frame->width;  
+           int imageHeight = frame->height; 
+	
+	       double d,ax,in;
+	       for (i = 0; i< imageHeight;i++)  
+            {  
+			//uchar* ptr = (uchar*) (bwImage->imageData + i*bwimage->widthStep);
+              for (j = 0;j<imageWidth;j++)  
+               {  
+                ppixel = (unsigned char*)frame->imageData + i*frame->widthStep + j*3;  
+                pixelb = ppixel[0];
+                pixelg = ppixel[1];
+                pixelr = ppixel[2];
+				ax=max(max(pixelr,pixelg),pixelb);
+				in=min(min(pixelr,pixelg),pixelb);
+			    d=ax-in;
+
+				
+				if(pixelr==ax){h=(pixelg-pixelb)/d*60;s=d/ax;v=ax;}
+				if(pixelg==ax){h=120+(pixelb-pixelr)/d*60;s=d/ax;v=ax;}
+				if(pixelb==ax){h=240+(pixelr-pixelg)/d*60;s=d/ax;v=ax;}
+				
+				 if (h<160&&h>110&&s>0.4&&v>18)
+				
+                {  
+                    *((unsigned char*)frame_gray->imageData + i*frame_gray->widthStep + j) = 255;  
+                }else {  
+                    *((unsigned char*)frame_gray->imageData + i*frame_gray->widthStep + j) = 0;  
+                  }
+				  
+			    }
+	         }
+	
+	     Mat m(frame_gray);
+	     Mat element = getStructuringElement(MORPH_RECT, Size(5, 5)); 
+	    dilate(m,m,element);
+		
+		 
+	     cvShowImage( "window_name", frame_gray );
+         int cnt = cvFindContours(frame_gray,storage,&seq);//返回轮廓的数目 
+	     CvRect rect;  
+         CvBox2D box;  
+		 double AREA=660;
+		 double MAX=30*AREA;
+		 double MIN=15*AREA;
+		 for (tempSeq = seq;tempSeq != NULL; tempSeq = tempSeq->h_next)  
+          {  
+			double area =  cvContourArea(tempSeq);
+			rect = cvBoundingRect(tempSeq,1);
+		    CvPoint2D32f pt[4];  
+            box = cvMinAreaRect2(tempSeq,0);  
+            cvBoxPoints(box,pt); 
+			double temp;
+			double axisShort = sqrt(pow(pt[1].x -pt[0].x,2) + pow(pt[1].y -pt[0].y,2));  
+			double axisLong = sqrt(pow(pt[2].x -pt[1].x,2) + pow(pt[2].y -pt[1].y,2));  
+			double degree=(pt[1].y -pt[0].y)/(pt[1].x -pt[0].x);
+			if (axisShort > axisLong)
+				{
+					temp = axisLong;
+					axisLong = axisShort;
+					axisShort= temp;  
+					degree=-1/degree;
+				}
+			double long2Short = axisLong/axisShort;  
+			//cout<<area<<endl;
+			if (long2Short> 0.7&& long2Short < 1.5&&area>100 )
+               {   
+
+					double res_w=WIDTH/(double)rect.width;
+					double res_h=HEIGHT/(double)rect.height;
+					double length=0.6*(res_w+res_h)/2;
+					char a[10];
+					cvSetImageROI(frame,rect);
+					double l_r=0,w_b=0;
+					
+					IplImage* gray=cvCreateImage(cvSize(rect.width,rect.height),8,1);
+					cvCvtColor(frame, gray, CV_RGB2GRAY);
+					cvThreshold(gray, gray, 100, 255.0, CV_THRESH_BINARY_INV);				
+					//cvResetImageROI(frame);					
+					sprintf(a,"%f",length);
+					a[7]='m';	
+					CvPoint2D32f center;  
+					center.x=rect.width/2;
+					center.y=rect.height/2;
+					//cvShowImage("fgfd",gray);
+					choose(gray,&w_b,&l_r);
+					//cout<<"黑白比："<<w_b<<"   下上比："<<l_r<<endl;
+
+					switch(get(w_b,l_r))
+					{
+				    case 1:
+						cvNamedWindow("img11",0);
+					     cvShowImage("img11",frame);
+					cvResetImageROI(frame);	
+					cvPutText(frame,a, cvPoint(rect.x,rect.y+rect.height/2), &font, CV_RGB(255,0,0));
+					cvPutText(frame,"distance:", cvPoint(rect.x,rect.y), &font, CV_RGB(255,0,0));
+					cvPutText(frame,"bottle", cvPoint(rect.x,rect.y+rect.height), &font, CV_RGB(255,0,0));break;
+					case 2:
+						cvNamedWindow("img22",0);
+						cvShowImage("img22",frame);
+					cvResetImageROI(frame);	
+					cvPutText(frame,a, cvPoint(rect.x,rect.y+rect.height/2), &font, CV_RGB(255,0,0));
+					cvPutText(frame,"distance:", cvPoint(rect.x,rect.y), &font, CV_RGB(255,0,0));
+                    cvPutText(frame,"computer", cvPoint(rect.x,rect.y+rect.height), &font, CV_RGB(255,0,0));break;
+					case 3:
+						cvNamedWindow("img33",0);
+						cvShowImage("img33",frame);
+					cvResetImageROI(frame);	
+					cvPutText(frame,a, cvPoint(rect.x,rect.y+rect.height/2), &font, CV_RGB(255,0,0));
+					cvPutText(frame,"distance:", cvPoint(rect.x,rect.y), &font, CV_RGB(255,0,0));
+                    cvPutText(frame,"chair", cvPoint(rect.x,rect.y+rect.height), &font, CV_RGB(255,0,0));break;
+					case 0:
+						//cvShowImage("img11",frame);
+					cvResetImageROI(frame);	
+					cvPutText(frame,a, cvPoint(rect.x,rect.y+rect.height/2), &font, CV_RGB(255,0,0));
+					cvPutText(frame,"distance:", cvPoint(rect.x,rect.y), &font, CV_RGB(255,0,0));
+                    cvPutText(frame,"chair", cvPoint(rect.x,rect.y+rect.height), &font, CV_RGB(255,0,0));break;
+                    break;
+					}
+
+					cvReleaseImage(&gray);
+			   }
+
+		    }
+
+		 }
+		 cvInitFont(&font1,CV_FONT_HERSHEY_SIMPLEX, 1, 1, 1, 2, 8); 
+		 cvPutText(frame,"Start", cvPoint(point1.x+10,point1.y+30), &font1, CV_RGB(0,255,0));
+	     cvPutText(frame,"Pause", cvPoint(point1.x+110,point1.y+30), &font1, CV_RGB(0,255,0));
+		   cvShowImage("img",frame);
+		   m++;
+    //       cvWaitKey(50);
+	 if(!start||cvWaitKey(10)==32)
+		cvWaitKey(0);
+	 else
+        cvWaitKey(100);
+	 start=1;
+		   if(m==numFrames-1)break;
+	}
+	cvReleaseImage(&frame_gray);
+	cout<<"视频播放结束"<<endl;
+	system("pause");
+    return (0);
+}
+
